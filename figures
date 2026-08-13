@@ -1,0 +1,80 @@
+import numpy as np
+import matplotlib.pyplot as plt
+from scipy.linalg import expm
+from forward_euler import forward_euler
+from strang import strang
+Z = np.array([[1, 0], [0, -1]], dtype=complex)
+X = np.array([[0, 1], [1, 0]], dtype=complex)
+H_A = Z
+H_B = 0.7 * X
+H = H_A + H_B
+psi0 = np.array([1, 0], dtype=complex)
+def lie_trotter(dt, n_steps):
+    U_A = expm(-1j * dt * H_A)
+    U_B = expm(-1j * dt * H_B)
+    psi = np.zeros((n_steps + 1, 2), dtype=complex)
+    psi[0] = psi0
+    for n in range(n_steps):
+        psi[n + 1] = U_A @ (U_B @ psi[n])
+    return psi
+def solve_all(dt, n_steps):
+    exact = np.array([expm(-1j * n * dt * H) @ psi0 for n in range(n_steps + 1)])
+    euler = forward_euler(H, psi0, 1.0, 0.0, dt, n_steps)[2]
+    trotter = lie_trotter(dt, n_steps)
+    strang_sol = strang(H_A, H_B, psi0, 1.0, 0.0, dt, n_steps)[2]
+    return exact, euler, trotter, strang_sol
+def norm_error(psi):
+    return abs(np.sum(abs(psi) ** 2, axis=1) - 1)
+def save(xlabel, ylabel, title, filename, which="major"):
+    plt.xlabel(xlabel)
+    plt.ylabel(ylabel)
+    plt.title(title)
+    plt.grid(alpha=0.3, which=which)
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig(filename, dpi=100)
+    plt.close()
+dt = 0.1
+n_steps = 100
+times = dt * np.arange(n_steps + 1)
+exact, euler, trotter, strang_sol = solve_all(dt, n_steps)
+plt.figure(figsize=(8.9, 5.5))
+plt.semilogy(times, norm_error(exact), label="Exact matrix exponential")
+plt.semilogy(times, norm_error(euler), label="Forward Euler")
+plt.semilogy(times, (1 + 1.49 * dt**2) ** np.arange(n_steps + 1) - 1, "k--",
+             linewidth=1.2, label=r"Prediction $(1+\Delta t^2\omega^2)^n-1$")
+save("Time", r"$|\,\|\psi_n\|_2^2-1\,|$",
+     r"Forward Euler norm error versus time: $H=Z+0.7X$, $dt=0.1$",
+     "euler_norm_time.png")
+plt.figure(figsize=(8.9, 5.5))
+plt.semilogy(times, np.linalg.norm(trotter - exact, axis=1), label="Lie-Trotter")
+plt.semilogy(times, np.linalg.norm(strang_sol - exact, axis=1), label="Strang")
+save("Time", r"$\|\psi_n^{\mathrm{num}}-\psi_n^{\mathrm{exact}}\|_2$",
+     r"Splitting-method state error versus time: $T=10$, $dt=0.1$",
+     "strang_state_error_time.png")
+print("main run, dt=0.1, T=10")
+print(f"  Euler final norm^2      {np.sum(abs(euler[-1])**2):.6f}")
+print(f"  max norm error          Lie-Trotter {norm_error(trotter).max():.1e}   Strang {norm_error(strang_sol).max():.1e}")
+print(f"  final state error       Lie-Trotter {np.linalg.norm(trotter[-1]-exact[-1]):.3e}   Strang {np.linalg.norm(strang_sol[-1]-exact[-1]):.3e}")
+T = 2.0
+steps = np.array([T / N for N in [10, 20, 40, 80, 160, 320]])
+final_exact = expm(-1j * T * H) @ psi0
+errors = []
+for h in steps:
+    solutions = solve_all(h, round(T / h))
+    errors.append([np.linalg.norm(s[-1] - final_exact) for s in solutions[1:]])
+errors = np.array(errors)
+plt.figure(figsize=(8.9, 5.5))
+plt.loglog(steps, errors[:, 0], "o-", label="Forward Euler")
+plt.loglog(steps, errors[:, 1], "s-", label="Lie-Trotter")
+plt.loglog(steps, errors[:, 2], "^-", label="Strang")
+plt.loglog(steps, errors[0, 0] * steps / steps[0], "k--", linewidth=1,
+           label=r"Reference $O(\Delta t)$")
+plt.loglog(steps, errors[0, 2] * (steps / steps[0]) ** 2, "k:", linewidth=1.2,
+           label=r"Reference $O(\Delta t^2)$")
+save(r"Step size $\Delta t$", r"$\|\psi_N^{\mathrm{num}}-\psi^{\mathrm{exact}}(T)\|_2$",
+     r"Final-time convergence at $T=2$: Euler, Lie-Trotter, Strang",
+     "euler_strang_convergence.png", which="both")
+for h, row in zip(steps, errors):
+    print(f"dt={h:.5f}  Euler {row[0]:.3e}  Trotter {row[1]:.3e}  Strang {row[2]:.3e}")
+print("Mean orders:", np.round(np.mean(np.log2(errors[:-1] / errors[1:]), axis=0), 3))
